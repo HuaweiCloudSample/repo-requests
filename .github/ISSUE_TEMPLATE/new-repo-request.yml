@@ -1,0 +1,133 @@
+name: 🗂️ 仓库创建申请
+description: 申请一个新的 GitHub 仓库，需管理员审批。
+title: "[新建仓库] "
+labels: ["repo-request"]
+assignees: []  # 可填管理员的 GitHub 用户名，如 ["admin"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 📦 基本信息
+        请如实填写以下信息，发起后会由管理员审批并创建。
+
+  - type: input
+    id: repo_name
+    attributes:
+      label: 建议的仓库名称
+      description: 格式为 `组织名/仓库名`
+      placeholder: my-org/my-new-repo
+    validations:
+      required: true
+
+  - type: dropdown
+    id: visibility
+    attributes:
+      label: 仓库可见性
+      options:
+        - 私有 (Private)
+        - 内部 (Internal)
+        - 公开 (Public)
+    validations:
+      required: true
+
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 仓库用途
+      description: 简要说明仓库用途和存放内容
+      placeholder: 例如：承载 xx 微服务的代码和部署配置
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ### 👥 团队与权限
+
+  - type: input
+    id: team
+    attributes:
+      label: 所属团队/项目组
+      placeholder: 例如：后端开发组
+
+  - type: textarea
+    id: members_write
+    attributes:
+      label: 需要写入权限的成员或团队
+      description: 需要 push 权限的人员（GitHub 用户名）或团队名，一行一个
+      placeholder: |
+        @zhangsan
+        @backend-team
+
+  - type: textarea
+    id: members_admin
+    attributes:
+      label: 需要管理员权限的维护者
+      description: 通常 1-2 人，负责仓库设置和分支保护
+      placeholder: |
+        @lisi（组长）
+
+  - type: markdown
+    attributes:
+      value: |
+        ### 🔒 分支保护与审核要求
+
+  - type: dropdown
+    id: need_code_review
+    attributes:
+      label: 是否启用强制代码审核（PR + 审批）？
+      options:
+        - 是，至少 1 人审批
+        - 是，至少 2 人审批
+        - 否（暂不设置）
+    validations:
+      required: true
+
+  - type: dropdown
+    id: need_signed_commits
+    attributes:
+      label: 是否要求提交签名（Verified commits）？
+      options:
+        - 是
+        - 否
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ### 🔐 安全与合规
+
+  - type: dropdown
+    id: sensitive_data
+    attributes:
+      label: 仓库是否会存储敏感数据（密钥、证书、PII 等）？
+      options:
+        - 否
+        - 是（请在补充说明中写明保护措施）
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: security_scans
+    attributes:
+      label: 需要启用的安全扫描（推荐全选）
+      options:
+        - label: Secret scanning（秘密扫描）
+        - label: Code scanning (CodeQL)
+        - label: Dependabot 依赖更新
+
+  - type: textarea
+    id: extra_notes
+    attributes:
+      label: 补充说明
+      description: 任何需要补充的信息（如初始化文件、外部协作者、迁移需求等）
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: 申请人确认
+      options:
+        - label: 我已确认以上信息真实有效，并同意遵循组织代码管理规范
+          required: true
