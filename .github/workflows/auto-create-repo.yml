@@ -13,7 +13,8 @@ jobs:
       ORG_NAME: ${{ github.repository_owner }}
 
     steps:
-      - name: 解析 Issue 内容
+      # ========== 1. 解析 Issue 正文 ==========
+      - name: 解析 Issue 内容获取申请信息
         id: parse
         uses: actions/github-script@v7
         with:
@@ -89,6 +90,7 @@ jobs:
             core.setOutput('team_write_json', JSON.stringify(teamWriteList));
             core.setOutput('team_admin_json', JSON.stringify(teamAdminList));
 
+      # ========== 2. 创建新仓库 ==========
       - name: 创建新仓库
         id: create
         run: |
@@ -108,6 +110,7 @@ jobs:
 
           echo "::set-output name=repo_full::${{ env.ORG_NAME }}/$REPO_NAME"
 
+      # ========== 3. 添加写入权限（用户/团队） ==========
       - name: 添加写入权限
         if: steps.parse.outputs.team_write_json != '[]'
         run: |
@@ -124,6 +127,7 @@ jobs:
             fi
           done
 
+      # ========== 4. 添加管理员权限 ==========
       - name: 添加管理员权限
         if: steps.parse.outputs.team_admin_json != '[]'
         run: |
@@ -140,11 +144,14 @@ jobs:
             fi
           done
 
-      - name: 设置分支保护
+      # ========== 5. 分支保护（容错处理） ==========
+      - name: 设置分支保护和代码审核
         if: steps.parse.outputs.need_review != '否（暂不设置）' && steps.parse.outputs.need_review != ''
+        continue-on-error: true  # 若因组织计划限制导致失败，不中断流程
         run: |
           REPO="${{ steps.create.outputs.repo_full }}"
           BRANCH="main"
+
           REVIEW_COUNT=1
           [[ "${{ steps.parse.outputs.need_review }}" == *"2 人"* ]] && REVIEW_COUNT=2
 
@@ -161,33 +168,55 @@ jobs:
             allow_force_pushes: false,
             allow_deletions: false
           }')
-          [ "${{ steps.parse.outputs.need_signed }}" == "是" ] && BODY=$(echo "$BODY" | jq '. + {required_signatures: true}')
 
-          gh api -X PUT "repos/$REPO/branches/$BRANCH/protection" \
+          if [ "${{ steps.parse.outputs.need_signed }}" == "是" ]; then
+            BODY=$(echo "$BODY" | jq '. + {required_signatures: true}')
+          fi
+
+          echo "尝试设置分支保护..."
+          if gh api -X PUT "repos/$REPO/branches/$BRANCH/protection" \
             -H "Accept: application/vnd.github+json" \
-            -f body="$BODY"
+            -f body="$BODY"; then
+            echo "✅ 分支保护已应用"
+          else
+            echo "⚠️ 分支保护设置失败（可能需要升级组织计划）"
+          fi
 
+      # ========== 6. 启用安全扫描 ==========
       - name: 启用安全扫描
+        continue-on-error: true  # 安全扫描也可能受许可限制，同样容错
         run: |
           REPO="${{ steps.create.outputs.repo_full }}"
-          gh api -X PATCH "repos/$REPO" -f security_and_analysis='{
+          if gh api -X PATCH "repos/$REPO" -f security_and_analysis='{
             "secret_scanning": {"status":"enabled"},
             "secret_scanning_push_protection": {"status":"enabled"}
-          }' || echo "安全扫描启用失败，可能需组织许可"
+          }'; then
+            echo "✅ 安全扫描已启用"
+          else
+            echo "⚠️ 安全扫描启用失败，可能需组织许可"
+          fi
 
-      - name: 通知完成并关闭 Issue
+      # ========== 7. 通知并关闭 Issue ==========
+      - name: 回复申请者
         uses: actions/github-script@v7
         with:
           script: |
             const issueNumber = context.issue.number;
             const repoFull = '${{ steps.create.outputs.repo_full }}';
             const repoUrl = `https://github.com/${repoFull}`;
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issueNumber,
-              body: `✅ 仓库已自动创建：${repoUrl}\n权限、分支保护、安全扫描已配置。`
+              body: `✅ 仓库已自动创建：${repoUrl}\n权限、分支保护、安全扫描已尽可能配置。若部分功能受限，请管理员手动检查。`
             });
+
+      - name: 关闭 Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = context.issue.number;
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
