@@ -13,10 +13,9 @@ jobs:
       ORG_NAME: ${{ github.repository_owner }}
 
     steps:
-      # ========== 1. 解析 Issue 正文 ==========
-      - name: 解析 Issue 内容获取申请信息
+      - name: 解析 Issue 内容
         id: parse
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const issueBody = context.payload.issue.body;
@@ -54,27 +53,25 @@ jobs:
 
             if (!repoNameRaw) throw new Error('未找到仓库名称');
 
-            // 清理仓库名
             let repoNameClean = repoNameRaw.split('/').pop();
             repoNameClean = repoNameClean.replace(/\s+/g, '-')
                                          .replace(/[^a-zA-Z0-9\-_.]/g, '')
                                          .toLowerCase()
-                                         .replace(/^-+|-+$/g, '');   // 去掉首尾连字符
+                                         .replace(/^-+|-+$/g, '');
 
             if (!repoNameClean || repoNameClean.length < 1) {
-              throw new Error('仓库名无效，清理后为空');
+              throw new Error('仓库名无效');
             }
 
             let privateFlag = true, isInternal = false;
             if (visibility.includes('公开')) { privateFlag = false; }
             else if (visibility.includes('内部')) { isInternal = true; }
 
-            // 将多分隔符的字符串拆分成数组（换行、逗号、空格）
             function splitEntities(raw) {
               if (!raw) return [];
-              return raw.split(/[\n,]+/)               // 先按换行和逗号拆
-                        .flatMap(s => s.split(/\s+/))  // 再按空格拆
-                        .map(s => s.trim().replace(/^@+/, '')) // 去 @ 和首尾空白
+              return raw.split(/[\n,]+/)
+                        .flatMap(s => s.split(/\s+/))
+                        .map(s => s.trim().replace(/^@+/, ''))
                         .filter(s => s.length > 0);
             }
 
@@ -90,7 +87,6 @@ jobs:
             core.setOutput('team_write_json', JSON.stringify(teamWriteList));
             core.setOutput('team_admin_json', JSON.stringify(teamAdminList));
 
-      # ========== 2. 创建新仓库 ==========
       - name: 创建新仓库
         id: create
         run: |
@@ -98,19 +94,12 @@ jobs:
           PRIVATE="${{ steps.parse.outputs.private }}"
           INTERNAL="${{ steps.parse.outputs.internal }}"
           DESCRIPTION="${{ steps.parse.outputs.description }}"
-
-          echo "仓库名称: $REPO_NAME"
           VISIBILITY="private"
           [ "$PRIVATE" == "false" ] && VISIBILITY="public"
           [ "$INTERNAL" == "true" ] && VISIBILITY="internal"
-
-          gh repo create "${{ env.ORG_NAME }}/$REPO_NAME" \
-            --$VISIBILITY \
-            --description "$DESCRIPTION"
-
+          gh repo create "${{ env.ORG_NAME }}/$REPO_NAME" --$VISIBILITY --description "$DESCRIPTION"
           echo "::set-output name=repo_full::${{ env.ORG_NAME }}/$REPO_NAME"
 
-      # ========== 3. 添加写入权限（用户/团队） ==========
       - name: 添加写入权限
         if: steps.parse.outputs.team_write_json != '[]'
         run: |
@@ -122,12 +111,10 @@ jobs:
               echo "✅ 已添加用户: $ENTITY"
             else
               echo "尝试作为团队: $ENTITY"
-              gh api -X PUT "orgs/${{ env.ORG_NAME }}/teams/$ENTITY/repos/$REPO" -f permission="push" || \
-              echo "⚠️  $ENTITY 添加失败，请检查该用户名/团队是否存在以及 token 权限"
+              gh api -X PUT "orgs/${{ env.ORG_NAME }}/teams/$ENTITY/repos/$REPO" -f permission="push" || echo "⚠️  $ENTITY 添加失败"
             fi
           done
 
-      # ========== 4. 添加管理员权限 ==========
       - name: 添加管理员权限
         if: steps.parse.outputs.team_admin_json != '[]'
         run: |
@@ -139,22 +126,18 @@ jobs:
               echo "✅ 已添加管理员用户: $ENTITY"
             else
               echo "尝试作为团队: $ENTITY"
-              gh api -X PUT "orgs/${{ env.ORG_NAME }}/teams/$ENTITY/repos/$REPO" -f permission="admin" || \
-              echo "⚠️  $ENTITY 管理员添加失败"
+              gh api -X PUT "orgs/${{ env.ORG_NAME }}/teams/$ENTITY/repos/$REPO" -f permission="admin" || echo "⚠️  $ENTITY 管理员添加失败"
             fi
           done
 
-      # ========== 5. 分支保护（容错处理） ==========
-      - name: 设置分支保护和代码审核
+      - name: 设置分支保护（容错）
         if: steps.parse.outputs.need_review != '否（暂不设置）' && steps.parse.outputs.need_review != ''
-        continue-on-error: true  # 若因组织计划限制导致失败，不中断流程
+        continue-on-error: true
         run: |
           REPO="${{ steps.create.outputs.repo_full }}"
           BRANCH="main"
-
           REVIEW_COUNT=1
           [[ "${{ steps.parse.outputs.need_review }}" == *"2 人"* ]] && REVIEW_COUNT=2
-
           BODY=$(jq -n --argjson count $REVIEW_COUNT '{
             required_status_checks: null,
             enforce_admins: false,
@@ -168,55 +151,34 @@ jobs:
             allow_force_pushes: false,
             allow_deletions: false
           }')
-
-          if [ "${{ steps.parse.outputs.need_signed }}" == "是" ]; then
-            BODY=$(echo "$BODY" | jq '. + {required_signatures: true}')
-          fi
-
-          echo "尝试设置分支保护..."
-          if gh api -X PUT "repos/$REPO/branches/$BRANCH/protection" \
+          [ "${{ steps.parse.outputs.need_signed }}" == "是" ] && BODY=$(echo "$BODY" | jq '. + {required_signatures: true}')
+          echo "应用分支保护..."
+          gh api -X PUT "repos/$REPO/branches/$BRANCH/protection" \
             -H "Accept: application/vnd.github+json" \
-            -f body="$BODY"; then
-            echo "✅ 分支保护已应用"
-          else
-            echo "⚠️ 分支保护设置失败（可能需要升级组织计划）"
-          fi
+            -f body="$BODY" || echo "⚠️ 分支保护设置失败（可能需要升级组织计划）"
 
-      # ========== 6. 启用安全扫描 ==========
-      - name: 启用安全扫描
-        continue-on-error: true  # 安全扫描也可能受许可限制，同样容错
+      - name: 启用安全扫描（容错）
+        continue-on-error: true
         run: |
           REPO="${{ steps.create.outputs.repo_full }}"
-          if gh api -X PATCH "repos/$REPO" -f security_and_analysis='{
+          gh api -X PATCH "repos/$REPO" -f security_and_analysis='{
             "secret_scanning": {"status":"enabled"},
             "secret_scanning_push_protection": {"status":"enabled"}
-          }'; then
-            echo "✅ 安全扫描已启用"
-          else
-            echo "⚠️ 安全扫描启用失败，可能需组织许可"
-          fi
+          }' || echo "⚠️ 安全扫描启用失败（可能需组织许可）"
 
-      # ========== 7. 通知并关闭 Issue ==========
-      - name: 回复申请者
-        uses: actions/github-script@v7
+      - name: 通知完成并关闭 Issue
+        uses: actions/github-script@v9
         with:
           script: |
             const issueNumber = context.issue.number;
             const repoFull = '${{ steps.create.outputs.repo_full }}';
             const repoUrl = `https://github.com/${repoFull}`;
-
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issueNumber,
-              body: `✅ 仓库已自动创建：${repoUrl}\n权限、分支保护、安全扫描已尽可能配置。若部分功能受限，请管理员手动检查。`
+              body: `✅ 仓库已自动创建：${repoUrl}\n权限已分配，分支保护/安全扫描可能需管理员手动检查。`
             });
-
-      - name: 关闭 Issue
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const issueNumber = context.issue.number;
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
