@@ -59,9 +59,7 @@ jobs:
                                          .toLowerCase()
                                          .replace(/^-+|-+$/g, '');
 
-            if (!repoNameClean || repoNameClean.length < 1) {
-              throw new Error('仓库名无效');
-            }
+            if (!repoNameClean || repoNameClean.length < 1) throw new Error('仓库名无效');
 
             let privateFlag = true, isInternal = false;
             if (visibility.includes('公开')) { privateFlag = false; }
@@ -169,16 +167,19 @@ jobs:
       - name: 通知完成并关闭 Issue
         uses: actions/github-script@v9
         with:
+          github-token: ${{ secrets.ORG_ADMIN_TOKEN }}   # ✅ 使用 PAT 操作 Issue
           script: |
             const issueNumber = context.issue.number;
             const repoFull = '${{ steps.create.outputs.repo_full }}';
             const repoUrl = `https://github.com/${repoFull}`;
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issueNumber,
               body: `✅ 仓库已自动创建：${repoUrl}\n权限已分配，分支保护/安全扫描可能需管理员手动检查。`
             });
+
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
