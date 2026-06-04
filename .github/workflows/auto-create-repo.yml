@@ -1,0 +1,210 @@
+name: 自动创建仓库（审批通过后）
+
+on:
+  issues:
+    types: [labeled]  # 仅在 Issue 被添加标签时触发
+
+jobs:
+  create-repo:
+    # 只在添加了 'approved' 标签时运行
+    if: github.event.label.name == 'approved'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+      ORG_NAME: ${{ github.repository_owner }}
+
+    steps:
+      - name: 解析 Issue 内容获取申请信息
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueBody = context.payload.issue.body;
+            
+            // 将 Issue 正文解析为键值对 (适用于 YAML 表单生成的 Markdown)
+            function parseBody(body) {
+              const lines = body.split('\n');
+              const info = {};
+              let currentKey = '';
+              for (let line of lines) {
+                // 匹配 "### 字段名" 作为键
+                const keyMatch = line.match(/^### (.+)/);
+                if (keyMatch) {
+                  currentKey = keyMatch[1].trim();
+                  info[currentKey] = '';
+                  continue;
+                }
+                // 去除注释行和空行
+                if (line.startsWith('<!--') || line.trim() === '') continue;
+                // 累积内容
+                if (currentKey && info[currentKey] !== undefined) {
+                  info[currentKey] += line.trim() + '\n';
+                }
+              }
+              // 清理多余换行
+              for (const key in info) {
+                info[key] = info[key].trim();
+              }
+              return info;
+            }
+
+            const data = parseBody(issueBody);
+
+            // 提取关键字段（请根据你的表单字段 ID 调整）
+            const repoName = data['建议的仓库名称'] || data['仓库名称'];
+            const visibility = data['仓库可见性'] || '私有';
+            const teamWrite = data['需要写入权限的成员或团队'];
+            const teamAdmin = data['需要管理员权限的维护者'];
+            const needCodeReview = data['是否启用强制代码审核'];
+            const needSignedCommits = data['是否要求提交签名'];
+            const sensitiveData = data['仓库是否会存储敏感数据'];
+
+            // 校验必填项
+            if (!repoName) {
+              throw new Error('未找到仓库名称，请检查 Issue 模板');
+            }
+
+            // 提取纯仓库名（去掉组织前缀）
+            const repoNameClean = repoName.split('/').pop();
+
+            // 判断可见性
+            let privateFlag = true;
+            let isInternal = false;
+            if (visibility.includes('公开')) {
+              privateFlag = false;
+              isInternal = false;
+            } else if (visibility.includes('内部')) {
+              privateFlag = true;   // GitHub Enterprise 支持 Internal
+              isInternal = true;
+            }
+
+            // 将结果设置为本步骤的输出，供后续使用
+            core.setOutput('repo_name', repoNameClean);
+            core.setOutput('private', privateFlag);
+            core.setOutput('internal', isInternal);
+            core.setOutput('description', data['仓库用途'] || '');
+            core.setOutput('need_review', needCodeReview);
+            core.setOutput('need_signed', needSignedCommits);
+            core.setOutput('team_write', teamWrite);
+            core.setOutput('team_admin', teamAdmin);
+
+      - name: 创建新仓库
+        id: create
+        run: |
+          REPO_NAME="${{ steps.parse.outputs.repo_name }}"
+          PRIVATE="${{ steps.parse.outputs.private }}"
+          INTERNAL="${{ steps.parse.outputs.internal }}"
+          DESCRIPTION="${{ steps.parse.outputs.description }}"
+
+          echo "正在创建仓库: $REPO_NAME"
+
+          # 构建可见性参数
+          VISIBILITY="private"
+          if [ "$PRIVATE" == "false" ]; then
+            VISIBILITY="public"
+          elif [ "$INTERNAL" == "true" ]; then
+            VISIBILITY="internal"
+          fi
+
+          # 使用 GitHub CLI 创建仓库
+          gh repo create "${{ env.ORG_NAME }}/$REPO_NAME" \
+            --$VISIBILITY \
+            --description "$DESCRIPTION" \
+            --clone
+
+          echo "::set-output name=repo_full::${{ env.ORG_NAME }}/$REPO_NAME"
+
+      - name: 添加团队权限（如有填写）
+        if: steps.parse.outputs.team_write != '' || steps.parse.outputs.team_admin != ''
+        run: |
+          REPO="${{ steps.create.outputs.repo_full }}"
+          
+          # 添加写入团队
+          if [ -n "${{ steps.parse.outputs.team_write }}" ]; then
+            # 清理团队名：去掉 @ 并假设是团队 slug（可根据实际调整）
+            TEAMS_WRITE=$(echo "${{ steps.parse.outputs.team_write }}" | tr ',' '\n' | sed 's/@//g' | xargs)
+            for TEAM in $TEAMS_WRITE; do
+              echo "添加写入权限：$TEAM"
+              gh api -X PUT "orgs/${{ env.ORG_NAME }}/teams/$TEAM/repos/$REPO" \
+                -f permission="push"
+            done
+          fi
+
+          # 添加管理员团队
+          if [ -n "${{ steps.parse.outputs.team_admin }}" ]; then
+            TEAMS_ADMIN=$(echo "${{ steps.parse.outputs.team_admin }}" | tr ',' '\n' | sed 's/@//g' | xargs)
+            for TEAM in $TEAMS_ADMIN; do
+              echo "添加管理员权限：$TEAM"
+              gh api -X PUT "orgs/${{ env.ORG_NAME }}/teams/$TEAM/repos/$REPO" \
+                -f permission="admin"
+            done
+          fi
+
+      - name: 设置分支保护和代码审核
+        if: steps.parse.outputs.need_review != '否'
+        run: |
+          REPO="${{ steps.create.outputs.repo_full }}"
+          BRANCH="main"
+
+          # 基础保护要求
+          BODY='{
+            "required_status_checks": null,
+            "enforce_admins": false,
+            "required_pull_request_reviews": {
+              "dismiss_stale_reviews": true,
+              "require_code_owner_reviews": false,
+              "required_approving_review_count": 1
+            },
+            "restrictions": null,
+            "required_linear_history": false,
+            "allow_force_pushes": false,
+            "allow_deletions": false
+          }'
+
+          # 如果需要签名提交，添加此设置
+          if [ "${{ steps.parse.outputs.need_signed }}" == "是" ]; then
+            BODY=$(echo "$BODY" | jq '. + {"required_signatures": true}')
+          fi
+
+          echo "更新分支保护规则..."
+          gh api -X PUT "repos/$REPO/branches/$BRANCH/protection" \
+            -H "Accept: application/vnd.github+json" \
+            -f body="$BODY"
+
+      - name: 启用安全扫描
+        run: |
+          REPO="${{ steps.create.outputs.repo_full }}"
+          
+          # 启用 Secret scanning 和 Code scanning (CodeQL)
+          gh api -X PATCH "repos/$REPO" \
+            -f security_and_analysis='{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"enabled"},"advanced_security":{"status":"enabled"}}' || true
+
+          # CodeQL 需要额外初始化（可先通过 API 创建默认 CodeQL 工作流）
+          # 这里简化，手动在仓库启用 Code scanning 或由安全团队统一配置
+
+      - name: 在 Issue 中回复仓库创建完成
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = context.issue.number;
+            const repoFull = '${{ steps.create.outputs.repo_full }}';
+            const repoUrl = `https://github.com/${repoFull}`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `✅ 仓库已自动创建：${repoUrl}\n已按申请配置权限、分支保护和安全扫描。`
+            });
+
+      - name: 关闭 Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = context.issue.number;
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              state: 'closed'
+            });
