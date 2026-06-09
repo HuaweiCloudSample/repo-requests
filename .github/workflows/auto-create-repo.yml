@@ -4,6 +4,10 @@ on:
   issues:
     types: [labeled]
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   create-repo:
     if: github.event.label.name == 'approved'
@@ -239,7 +243,7 @@ jobs:
       - name: 通知完成并关闭 Issue
         uses: actions/github-script@v9
         with:
-          github-token: ${{ secrets.ORG_ADMIN_TOKEN }}   # ✅ 使用 PAT 操作 Issue
+          github-token: ${{ github.token }}
           script: |
             const issueNumber = context.issue.number;
             const repoFull = '${{ steps.create.outputs.repo_full }}';
