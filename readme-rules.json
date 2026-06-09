@@ -1,0 +1,75 @@
+{
+  "required_file": "README.md",
+  "critical_sections": [
+    "简介/概述",
+    "使用方法 / 验证",
+    "许可证",
+    "联系方式 / 维护者"
+  ],
+  "recommended_sections": [
+    "目录",
+    "架构图",
+    "方案亮点",
+    "涉及云服务与费用",
+    "前置条件",
+    "快速开始 / 一键部署",
+    "分步部署",
+    "清理资源",
+    "详细说明",
+    "依赖与致谢",
+    "FAQ / 故障排除",
+    "贡献指南"
+  ],
+  "required_patterns": [
+    {
+      "name": "项目标题",
+      "pattern": "^\\\\?#\\s+\\S+",
+      "message": "README 必须以一级标题作为项目名称。"
+    },
+    {
+      "name": "MIT-0 许可证",
+      "pattern": "MIT-0|MIT No Attribution",
+      "message": "许可证章节必须声明 MIT-0 (MIT No Attribution)。"
+    },
+    {
+      "name": "华为云样例徽章",
+      "pattern": "Huawei%20Cloud|Huawei Cloud",
+      "message": "README 应包含 Huawei Cloud Samples 徽章或等价标识。"
+    },
+    {
+      "name": "免责声明",
+      "pattern": "免责声明|按[\"“]?原样[\"”]?提供|as-is|AS IS",
+      "message": "许可证章节必须包含免责声明。"
+    },
+    {
+      "name": "贡献指南链接",
+      "pattern": "CONTRIBUTING\\.md|贡献指南",
+      "message": "README 应包含贡献指南说明或 CONTRIBUTING.md 链接。"
+    },
+    {
+      "name": "问题反馈入口",
+      "pattern": "GitHub Issues|/issues\\)",
+      "message": "README 必须提供 GitHub Issues 或等价问题反馈入口。"
+    }
+  ],
+  "forbidden_patterns": [
+    {
+      "name": "未替换模板占位符",
+      "pattern": "\\{\\{[^}]+\\}\\}",
+      "message": "README 仍包含 {{...}} 模板占位符，请替换为真实内容。"
+    },
+    {
+      "name": "示例占位说明",
+      "pattern": "（如：|例如：|your-ak|your-sk|某某项目|一两句话：做什么|请补充|TODO|TBD",
+      "message": "README 仍包含模板示例或待补充文本，请替换为项目真实内容。"
+    }
+  ],
+  "section_min_chars": {
+    "简介/概述": 30,
+    "使用方法 / 验证": 40,
+    "许可证": 40,
+    "联系方式 / 维护者": 20
+  },
+  "max_errors_to_show": 50,
+  "max_warnings_to_show": 50
+}

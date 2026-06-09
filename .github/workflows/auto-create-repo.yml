@@ -13,6 +13,9 @@ jobs:
       ORG_NAME: ${{ github.repository_owner }}
 
     steps:
+      - name: 检出规范文件
+        uses: actions/checkout@v4
+
       - name: 解析 Issue 内容
         id: parse
         uses: actions/github-script@v9
@@ -163,6 +166,73 @@ jobs:
             "secret_scanning": {"status":"enabled"},
             "secret_scanning_push_protection": {"status":"enabled"}
           }' || echo "⚠️ 安全扫描启用失败（可能需组织许可）"
+
+      - name: 写入 README 模板（容错）
+        continue-on-error: true
+        run: |
+          REPO="${{ steps.create.outputs.repo_full }}"
+          REPO_NAME="${{ steps.parse.outputs.repo_name }}"
+          TEMPLATE_FILE="readme模板.md"
+          TMP_README="$(mktemp)"
+          python - "$TEMPLATE_FILE" "$TMP_README" "$REPO_NAME" <<'PY'
+          import pathlib
+          import sys
+
+          source, target, repo_name = sys.argv[1], sys.argv[2], sys.argv[3]
+          text = pathlib.Path(source).read_text(encoding="utf-8")
+          replacements = {
+              "{{PROJECT_NAME}}": repo_name,
+              "{{REPO_NAME}}": repo_name,
+              "{{PROJECT\\_NAME}}": repo_name,
+              "{{REPO\\_NAME}}": repo_name,
+          }
+          for old, new in replacements.items():
+              text = text.replace(old, new)
+          pathlib.Path(target).write_text(text, encoding="utf-8")
+          PY
+          CONTENT=$(base64 -w 0 "$TMP_README")
+          gh api -X PUT "repos/$REPO/contents/README.md" \
+            -f message="docs: add README template" \
+            -f content="$CONTENT" \
+            || echo "⚠️ README 模板写入失败，请手动创建 README.md"
+
+      - name: 写入 README 规范审核 Workflow（容错）
+        continue-on-error: true
+        run: |
+          REPO="${{ steps.create.outputs.repo_full }}"
+          WORKFLOW_PATH=".github/workflows/validate-readme.yml"
+          TMP_FILE="$(mktemp)"
+          cat > "$TMP_FILE" <<'EOF'
+          name: README 规范审核
+
+          on:
+            pull_request:
+              paths:
+                - README.md
+            push:
+              branches:
+                - main
+              paths:
+                - README.md
+            workflow_dispatch:
+
+          permissions:
+            contents: read
+            pull-requests: write
+
+          jobs:
+            validate-readme:
+              uses: HuaweiCloudSample/repo-requests/.github/workflows/validate-readme.yml@main
+              with:
+                readme-path: README.md
+                warnings-as-errors: false
+          EOF
+
+          CONTENT=$(base64 -w 0 "$TMP_FILE")
+          gh api -X PUT "repos/$REPO/contents/$WORKFLOW_PATH" \
+            -f message="chore: add README validation workflow" \
+            -f content="$CONTENT" \
+            || echo "⚠️ README 规范审核 Workflow 写入失败，请手动接入"
 
       - name: 通知完成并关闭 Issue
         uses: actions/github-script@v9

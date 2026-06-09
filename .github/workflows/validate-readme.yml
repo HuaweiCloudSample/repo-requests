@@ -1,0 +1,122 @@
+name: README 规范审核
+
+on:
+  workflow_call:
+    inputs:
+      readme-path:
+        description: README 文件路径
+        required: false
+        type: string
+        default: README.md
+      rules-path:
+        description: 规则文件路径，相对于 repo-requests 仓库根目录
+        required: false
+        type: string
+        default: readme-rules.json
+      warnings-as-errors:
+        description: 是否将 MINOR 建议作为失败项
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      token:
+        required: false
+  pull_request:
+    paths:
+      - README.md
+      - readme-rules.json
+      - scripts/validate_readme.py
+      - .github/workflows/validate-readme.yml
+  workflow_dispatch:
+    inputs:
+      readme-path:
+        description: README 文件路径
+        required: false
+        default: README.md
+      warnings-as-errors:
+        description: 是否将 MINOR 建议作为失败项
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出待审核仓库
+        uses: actions/checkout@v4
+        with:
+          path: target
+
+      - name: 检出 README 审核规则
+        uses: actions/checkout@v4
+        with:
+          repository: HuaweiCloudSample/repo-requests
+          ref: main
+          token: ${{ secrets.token || github.token }}
+          path: rules
+
+      - name: 执行 README 规范审核
+        id: validate
+        working-directory: target
+        run: |
+          README_PATH="${{ inputs['readme-path'] || github.event.inputs['readme-path'] || 'README.md' }}"
+          WARNINGS_AS_ERRORS="${{ inputs['warnings-as-errors'] || github.event.inputs['warnings-as-errors'] || false }}"
+          EXTRA_ARGS=""
+          if [ "$WARNINGS_AS_ERRORS" = "true" ]; then
+            EXTRA_ARGS="--warnings-as-errors"
+          fi
+          python ../rules/scripts/validate_readme.py \
+            --readme "$README_PATH" \
+            --rules "../rules/${{ inputs['rules-path'] || 'readme-rules.json' }}" \
+            --report "../readme-validation-report.md" \
+            $EXTRA_ARGS
+
+      - name: 上传审核报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: readme-validation-report
+          path: readme-validation-report.md
+
+      - name: PR 评论审核结果
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- readme-validation-report -->';
+            const reportPath = 'readme-validation-report.md';
+            const report = fs.existsSync(reportPath)
+              ? fs.readFileSync(reportPath, 'utf8')
+              : 'README 规范审核未生成报告，请查看 Action 日志。';
+            const body = `${marker}\n${report}`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number
+            });
+            const previous = comments.find(comment =>
+              comment.user.type === 'Bot' && comment.body.includes(marker)
+            );
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: previous.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body
+              });
+            }
