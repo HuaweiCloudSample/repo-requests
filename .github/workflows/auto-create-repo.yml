@@ -106,14 +106,16 @@ jobs:
           [ "$INTERNAL" == "true" ] && VISIBILITY="internal"
 
           INIT_DIR="$(mktemp -d)"
-          mkdir -p "$INIT_DIR/.github/workflows"
 
           python - "readme模板.md" "$INIT_DIR/README.md" "$REPO_NAME" <<'PY'
+          import re
           import pathlib
           import sys
 
           source, target, repo_name = sys.argv[1], sys.argv[2], sys.argv[3]
           text = pathlib.Path(source).read_text(encoding="utf-8")
+          text = re.sub(r"\\([#\[\]\!\*\-`>])", r"\1", text)
+          text = re.sub(r"\\---", "---", text)
           replacements = {
               "{{PROJECT_NAME}}": repo_name,
               "{{REPO_NAME}}": repo_name,
@@ -125,50 +127,14 @@ jobs:
           pathlib.Path(target).write_text(text, encoding="utf-8")
           PY
 
-          cat > "$INIT_DIR/.github/workflows/validate-readme.yml" <<'EOF'
-          name: README 规范审核
-
-          on:
-            pull_request:
-              paths:
-                - README.md
-            push:
-              branches:
-                - main
-              paths:
-                - README.md
-            workflow_dispatch:
-
-          permissions:
-            contents: read
-            pull-requests: write
-
-          jobs:
-            validate-readme:
-              uses: HuaweiCloudSample/repo-requests/.github/workflows/validate-readme.yml@main
-              with:
-                readme-path: README.md
-                warnings-as-errors: false
-          EOF
-
-          python - "$INIT_DIR/.github/workflows/validate-readme.yml" <<'PY'
-          import pathlib
-          import sys
-
-          path = pathlib.Path(sys.argv[1])
-          text = path.read_text(encoding="utf-8")
-          lines = [line[10:] if line.startswith("          ") else line for line in text.splitlines()]
-          path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-          PY
-
           git -C "$INIT_DIR" init -b main
           git -C "$INIT_DIR" config user.name "github-actions[bot]"
           git -C "$INIT_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$INIT_DIR" add README.md .github/workflows/validate-readme.yml
+          git -C "$INIT_DIR" add README.md
           git -C "$INIT_DIR" commit -m "chore: initialize repository"
 
           if ! gh repo create "${{ env.ORG_NAME }}/$REPO_NAME" --$VISIBILITY --description "$DESCRIPTION" --source "$INIT_DIR" --push --remote origin; then
-            echo "::error::仓库已尝试创建，但初始化 README/workflow 推送失败。请检查 ORG_ADMIN_TOKEN 是否对新仓库具有 Contents: Read and write 权限；如需写入 .github/workflows，还需要 Workflows: Read and write 权限。fine-grained PAT 请授权 All repositories。"
+            echo "::error::仓库已尝试创建，但初始化 README 推送失败。请检查 ORG_ADMIN_TOKEN 是否对新仓库具有 Contents: Read and write 权限。fine-grained PAT 请授权 All repositories。"
             exit 1
           fi
 
