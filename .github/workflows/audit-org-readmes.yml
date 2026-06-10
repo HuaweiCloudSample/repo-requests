@@ -1,0 +1,83 @@
+name: 组织 README 定期巡检
+
+on:
+  schedule:
+    - cron: "0 1 * * 1"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 巡检模式：report-only 只生成报告，issue 会创建/更新目标仓库 Issue
+        required: true
+        default: report-only
+        type: choice
+        options:
+          - report-only
+          - issue
+      include-archived:
+        description: 是否包含 archived 仓库
+        required: false
+        type: boolean
+        default: false
+      include-forks:
+        description: 是否包含 fork 仓库
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN }}
+      ORG_NAME: ${{ github.repository_owner }}
+    steps:
+      - name: 检出巡检规则
+        uses: actions/checkout@v4
+
+      - name: 执行 README 巡检
+        id: audit
+        continue-on-error: true
+        run: |
+          MODE="${{ github.event.inputs.mode || 'report-only' }}"
+          EXTRA_ARGS=""
+          if [ "${{ github.event.inputs.include-archived || false }}" = "true" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --include-archived"
+          fi
+          if [ "${{ github.event.inputs.include-forks || false }}" = "true" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --include-forks"
+          fi
+
+          python scripts/audit_org_readmes.py \
+            --org "$ORG_NAME" \
+            --rules readme-rules.json \
+            --mode "$MODE" \
+            --report readme-audit-report.md \
+            --json-report readme-audit-report.json \
+            $EXTRA_ARGS
+
+      - name: 写入 Step Summary
+        if: always()
+        run: |
+          if [ -f readme-audit-report.md ]; then
+            cat readme-audit-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "README 巡检未生成报告，请查看日志。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 上传巡检报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: readme-audit-report
+          path: |
+            readme-audit-report.md
+            readme-audit-report.json
+
+      - name: 巡检失败时标记 Action
+        if: steps.audit.outcome == 'failure'
+        run: |
+          echo "::error::存在 README 不符合组织模板规范的仓库，请查看巡检报告。"
+          exit 1
