@@ -43,6 +43,9 @@ jobs:
         run: |
           MODE="${{ github.event.inputs.mode || 'report-only' }}"
           EXTRA_ARGS=""
+          if [ "$MODE" = "issue" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --fail-on-violations"
+          fi
           if [ "${{ github.event.inputs.include-archived || false }}" = "true" ]; then
             EXTRA_ARGS="$EXTRA_ARGS --include-archived"
           fi
@@ -79,5 +82,5 @@ jobs:
       - name: 巡检失败时标记 Action
         if: steps.audit.outcome == 'failure'
         run: |
-          echo "::error::存在 README 不符合组织模板规范的仓库，请查看巡检报告。"
+          echo "::error::README 巡检执行失败，或 issue 模式发现不合规仓库。请查看巡检报告。"
           exit 1

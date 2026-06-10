@@ -56,6 +56,8 @@ jobs:
 - `report-only`：只生成巡检报告，不修改业务仓库。
 - `issue`：对不合规仓库创建或更新 `README 规范巡检未通过` Issue；合规后会关闭已有巡检 Issue。
 
+`report-only` 模式即使发现不合规仓库也会让 Action 成功结束，方便把它作为定期审计报告使用；`issue` 模式会在发现不合规仓库时标记 Action 失败。
+
 `ORG_ADMIN_TOKEN` 至少需要：
 
 - `Contents: Read-only`

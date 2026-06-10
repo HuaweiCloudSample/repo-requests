@@ -192,6 +192,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=["report-only", "issue"], default="report-only")
     parser.add_argument("--include-archived", action="store_true")
     parser.add_argument("--include-forks", action="store_true")
+    parser.add_argument("--fail-on-violations", action="store_true", help="Exit 1 when any repo fails the audit.")
     parser.add_argument("--report", default="readme-audit-report.md")
     parser.add_argument("--json-report", default="readme-audit-report.json")
     args = parser.parse_args()
@@ -252,7 +253,7 @@ def main() -> int:
     )
     print(report)
     failed_count = sum(1 for item in results if item.status in {"failed", "missing"})
-    return 1 if failed_count else 0
+    return 1 if args.fail_on_violations and failed_count else 0
 
 
 if __name__ == "__main__":
